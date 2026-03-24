@@ -3,8 +3,14 @@
 package pagination
 
 import (
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 // Defaults and limits.
@@ -74,6 +80,65 @@ func Parse(r *http.Request) Params {
 	}
 
 	return Params{Limit: limit, Offset: offset, Page: page}
+}
+
+// ---------------------------------------------------------------------------
+// Cursor-based (keyset) pagination
+// ---------------------------------------------------------------------------
+
+// CursorParams holds keyset/cursor pagination parameters.
+type CursorParams struct {
+	Cursor    string `json:"cursor"`    // opaque base64 cursor
+	Limit     int    `json:"limit"`
+	Direction string `json:"direction"` // "next" or "prev"
+}
+
+// CursorResponse holds a page of results with cursor metadata.
+type CursorResponse[T any] struct {
+	Data       []T    `json:"data"`
+	NextCursor string `json:"next_cursor,omitempty"`
+	PrevCursor string `json:"prev_cursor,omitempty"`
+	HasMore    bool   `json:"has_more"`
+}
+
+// ParseCursorParams extracts cursor pagination from an HTTP request.
+func ParseCursorParams(r *http.Request) CursorParams {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > MaxLimit {
+		limit = DefaultLimit
+	}
+	return CursorParams{
+		Cursor:    r.URL.Query().Get("cursor"),
+		Limit:     limit,
+		Direction: r.URL.Query().Get("direction"),
+	}
+}
+
+// EncodeCursor encodes an ID + timestamp into a base64 cursor string.
+func EncodeCursor(id uuid.UUID, createdAt time.Time) string {
+	data := fmt.Sprintf("%s|%d", id.String(), createdAt.UnixMicro())
+	return base64.URLEncoding.EncodeToString([]byte(data))
+}
+
+// DecodeCursor decodes a base64 cursor into ID + timestamp.
+func DecodeCursor(cursor string) (uuid.UUID, time.Time, error) {
+	data, err := base64.URLEncoding.DecodeString(cursor)
+	if err != nil {
+		return uuid.Nil, time.Time{}, fmt.Errorf("invalid cursor: %w", err)
+	}
+	parts := strings.SplitN(string(data), "|", 2)
+	if len(parts) != 2 {
+		return uuid.Nil, time.Time{}, fmt.Errorf("malformed cursor")
+	}
+	id, err := uuid.Parse(parts[0])
+	if err != nil {
+		return uuid.Nil, time.Time{}, fmt.Errorf("invalid cursor id: %w", err)
+	}
+	micros, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return uuid.Nil, time.Time{}, fmt.Errorf("invalid cursor time: %w", err)
+	}
+	return id, time.UnixMicro(micros), nil
 }
 
 func intParam(s string, fallback int) int {
