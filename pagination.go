@@ -16,7 +16,7 @@ import (
 // Defaults and limits.
 const (
 	DefaultLimit = 20
-	MaxLimit     = 100
+	MaxLimit     = 500
 )
 
 // Params holds parsed pagination parameters from an HTTP request.
